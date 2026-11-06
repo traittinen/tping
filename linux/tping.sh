@@ -6,7 +6,7 @@ pings_ok=0
 pings_nok=0
 pings_dup=0
 start_time=`date +%s%3N`
-rtt_min=999
+rtt_min=
 rtt_max=0
 rtt_cumulative=0
 
@@ -18,7 +18,10 @@ fi
 control_c()
 # run if user hits control-c
 {
-  packet_loss=$(echo "scale=1; $pings_nok / $pings_sent * 100" | bc -l)
+  packet_loss=0
+  if [ $pings_sent -gt 0 ]; then
+    packet_loss=$(echo "scale=1; $pings_nok * 100 / $pings_sent" | bc -l)
+  fi
   ping_time=$(echo "`date +%s%3N` - $start_time" | bc)
 
   echo -en "\n--- $host ping statistics ---\n"
@@ -38,7 +41,9 @@ control_c()
 trap control_c SIGINT
 
 while :; do
-    result=`ping -W 1 -c 1 $host | grep 'bytes from '`
+    sleep 1 &  # pacer: keeps a steady 1 s interval regardless of ping duration
+    pacer=$!
+    result=`ping -W 1 -c 1 $host | grep -E 'bytes from .*time='`
     if [ $? -gt 0 ]; then
         echo -e "`date +'%Y/%m/%d %H:%M:%S %Z'` - host $host is \033[0;31mdown\033[0m"
         let pings_sent++
@@ -48,7 +53,7 @@ while :; do
         rtt=$(echo $result | sed 's/.*time=\(.*\) ms.*/\1/')        
         rtt_cumulative=$(echo "$rtt_cumulative + $rtt" | bc)
         if [ $(echo "$rtt > $rtt_max" | bc -l) -eq 1 ]; then rtt_max=$rtt; fi
-        if [ $(echo "$rtt < $rtt_min" | bc -l) -eq 1 ]; then rtt_min=$rtt; fi
+        if [ -z "$rtt_min" ] || [ $(echo "$rtt < $rtt_min" | bc -l) -eq 1 ]; then rtt_min=$rtt; fi
 
         dup=$(echo $result | grep DUP!)
         if [ $? -gt 0 ]; then
@@ -60,8 +65,8 @@ while :; do
             let pings_ok++
         fi
 
-        let pings_sent++        
-        sleep 1 # avoid ping rain
+        let pings_sent++
     fi
+    wait $pacer  # avoid ping rain
 done
 
